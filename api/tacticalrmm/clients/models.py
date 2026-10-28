@@ -3,6 +3,7 @@ from typing import Dict
 
 from django.contrib.postgres.fields import ArrayField
 from django.core.cache import cache
+from django.core.validators import MaxValueValidator
 from django.db import models
 
 from agents.models import Agent
@@ -15,11 +16,29 @@ def _default_failing_checks_data() -> Dict[str, bool]:
     return {"error": False, "warning": False}
 
 
+# MeshCentral user consent bits: desktop notify 1, prompt 8, toolbar 64,
+# terminal notify 2, prompt 16, files notify 4, prompt 32
+MESH_CONSENT_MAX = 0x7F
+MESH_CONSENT_FIELDS = {"mesh_consent_workstation", "mesh_consent_server"}
+
+
+def _mesh_consent_field(help_text: str):
+    return models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        validators=[MaxValueValidator(MESH_CONSENT_MAX)],
+        help_text=help_text,
+    )
+
+
 class Client(BaseAuditModel):
     objects = PermissionQuerySet.as_manager()
 
     name = models.CharField(max_length=255, unique=True)
     block_policy_inheritance = models.BooleanField(default=False)
+    # remote access privacy per device type (#2292, #2404)
+    mesh_consent_workstation = _mesh_consent_field("null = not managed by TRMM")
+    mesh_consent_server = _mesh_consent_field("null = not managed by TRMM")
     failing_checks = models.JSONField(default=_default_failing_checks_data)
     workstation_policy = models.ForeignKey(
         "automation.Policy",
@@ -96,6 +115,8 @@ class Site(BaseAuditModel):
     client = models.ForeignKey(Client, related_name="sites", on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     block_policy_inheritance = models.BooleanField(default=False)
+    mesh_consent_workstation = _mesh_consent_field("null = use the client setting")
+    mesh_consent_server = _mesh_consent_field("null = use the client setting")
     failing_checks = models.JSONField(default=_default_failing_checks_data)
     workstation_policy = models.ForeignKey(
         "automation.Policy",

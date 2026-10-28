@@ -26,7 +26,7 @@ from rest_framework.views import APIView
 from agents.utils import get_agent_url
 from core.models import CoreSettings
 from core.permissions import RunServerScriptPerms
-from core.tasks import sync_mesh_perms_task
+from core.tasks import sync_mesh_consent_task, sync_mesh_perms_task
 from core.utils import (
     get_core_settings,
     get_mesh_ws_url,
@@ -405,6 +405,8 @@ class GetUpdateDeleteAgent(APIView):
                     serializer.save()
 
         sync_mesh_perms_task.delay()
+        if {"site", "monitoring_type"} & request.data.keys():
+            sync_mesh_consent_task.delay()
         return Response("The agent was updated successfully")
 
     # uninstall agent

@@ -521,6 +521,15 @@ class Agent(BaseAuditModel):
             return ""
 
     @property
+    def mesh_consent(self) -> Optional[int]:
+        # site overrides client, None means TRMM leaves the device alone
+        field = f"mesh_consent_{self.monitoring_type}"
+        site_value = getattr(self.site, field)
+        return (
+            site_value if site_value is not None else getattr(self.site.client, field)
+        )
+
+    @property
     def hex_mesh_node_id(self) -> str:
         try:
             return _b64_to_hex(self.mesh_node_id)

@@ -21,11 +21,19 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from agents.models import Agent
+from core.tasks import sync_mesh_consent_task
 from core.utils import get_core_settings
 from tacticalrmm.helpers import notify_error
 from tacticalrmm.permissions import _has_partial_perm_on_client, _has_perm_on_site
 
-from .models import Client, ClientCustomField, Deployment, Site, SiteCustomField
+from .models import (
+    MESH_CONSENT_FIELDS,
+    Client,
+    ClientCustomField,
+    Deployment,
+    Site,
+    SiteCustomField,
+)
 from .permissions import ClientsPerms, DeploymentPerms, SitesPerms
 from .serializers import (
     ClientCustomFieldSerializer,
@@ -180,6 +188,8 @@ class GetUpdateDeleteClient(APIView):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if MESH_CONSENT_FIELDS & request.data["client"].keys():
+            sync_mesh_consent_task.delay()
 
         # update custom fields
         if "custom_fields" in request.data.keys():
@@ -287,6 +297,8 @@ class GetUpdateDeleteSite(APIView):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if MESH_CONSENT_FIELDS & request.data["site"].keys():
+            sync_mesh_consent_task.delay()
 
         # update custom field
         if "custom_fields" in request.data.keys():

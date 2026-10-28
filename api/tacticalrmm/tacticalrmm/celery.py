@@ -77,6 +77,10 @@ app.conf.beat_schedule = {
         "task": "core.tasks.sync_mesh_perms_task",
         "schedule": crontab(minute="*/4", hour="*"),
     },
+    "sync-mesh-consent-task": {
+        "task": "core.tasks.sync_mesh_consent_task",
+        "schedule": crontab(minute="1-59/4", hour="*"),
+    },
     "resolve-pending-actions": {
         "task": "core.tasks.resolve_pending_actions",
         "schedule": timedelta(seconds=100.0),

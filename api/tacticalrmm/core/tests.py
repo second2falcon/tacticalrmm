@@ -669,3 +669,91 @@ class TestCoreUtils(TacticalTestCase):
             r,
             "http://127.0.0.1:8653/meshagents?id=4&meshid=abc123&installflags=0",
         )
+
+
+class TestMeshConsentSync(TacticalTestCase):
+    """client/site remote access privacy pushed to MeshCentral (#2292, #2404)"""
+
+    def setUp(self):
+        self.setup_coresettings()
+        self.client_obj = baker.make(
+            "clients.Client", mesh_consent_workstation=8, mesh_consent_server=1
+        )
+        self.site = baker.make("clients.Site", client=self.client_obj)
+        self.ws = baker.make_recipe(
+            "agents.agent",
+            site=self.site,
+            monitoring_type="workstation",
+            mesh_node_id="aa" * 24,
+        )
+        self.srv = baker.make_recipe(
+            "agents.agent",
+            site=self.site,
+            monitoring_type="server",
+            mesh_node_id="bb" * 24,
+        )
+
+    def test_effective_consent(self):
+        self.assertEqual(self.ws.mesh_consent, 8)
+        self.assertEqual(self.srv.mesh_consent, 1)
+
+        # site overrides client, including turning everything off
+        self.site.mesh_consent_workstation = 0
+        self.site.save()
+        self.ws.refresh_from_db()
+        self.assertEqual(self.ws.mesh_consent, 0)
+        self.assertEqual(self.srv.mesh_consent, 1)
+
+        # unmanaged
+        self.client_obj.mesh_consent_server = None
+        self.client_obj.save()
+        self.srv.refresh_from_db()
+        self.assertIsNone(self.srv.mesh_consent)
+
+    @patch("core.tasks.get_mesh_ws_url", return_value="ws://mesh")
+    @patch("core.tasks.MeshSync")
+    def test_sync_only_pushes_differences(self, MeshSync, _):
+        from core.tasks import sync_mesh_consent_task
+
+        ws_node = f"node//{self.ws.hex_mesh_node_id}"
+        srv_node = f"node//{self.srv.hex_mesh_node_id}"
+        ms = MeshSync.return_value
+        ms.mesh_action.return_value = {
+            "nodes": {"mesh//x": [{"_id": ws_node, "consent": 8}, {"_id": srv_node}]}
+        }
+
+        sync_mesh_consent_task()
+
+        pushed = [
+            c.kwargs["payload"]
+            for c in ms.mesh_action.call_args_list
+            if c.kwargs["payload"]["action"] == "changedevice"
+        ]
+        self.assertEqual(
+            pushed, [{"action": "changedevice", "nodeid": srv_node, "consent": 1}]
+        )
+
+    @patch("core.tasks.MeshSync")
+    def test_sync_skips_mesh_when_nothing_managed(self, MeshSync):
+        from clients.models import Client
+
+        from core.tasks import sync_mesh_consent_task
+
+        Client.objects.update(mesh_consent_workstation=None, mesh_consent_server=None)
+        sync_mesh_consent_task()
+        MeshSync.assert_not_called()
+
+    @patch("core.tasks.sync_mesh_consent_task.delay")
+    def test_client_edit_triggers_sync(self, delay):
+        self.authenticate()
+        url = f"/clients/{self.client_obj.id}/"
+        r = self.client.put(url, {"client": {"mesh_consent_server": 72}}, format="json")
+        self.assertEqual(r.status_code, 200)
+        delay.assert_called_once()
+        self.client_obj.refresh_from_db()
+        self.assertEqual(self.client_obj.mesh_consent_server, 72)
+
+        r = self.client.put(
+            url, {"client": {"mesh_consent_server": 128}}, format="json"
+        )
+        self.assertEqual(r.status_code, 400)

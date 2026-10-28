@@ -45,6 +45,7 @@ from tacticalrmm.constants import (
     CACHE_DB_FIELDS_TASK_LOCK,
     CELERY_HEARTBEAT_CACHE_KEY,
     RESOLVE_ALERTS_LOCK,
+    SYNC_MESH_CONSENT_TASK_LOCK,
     SYNC_MESH_PERMS_TASK_LOCK,
     SYNC_SCHED_TASK_LOCK,
     AgentPlat,
@@ -601,6 +602,65 @@ def sync_mesh_perms_task(self):
                     )
                     ms2.update_mesh_displayname(user_info=mesh_users_dict[user])
 
+        except Exception:
+            logger.debug(traceback.format_exc())
+
+
+@app.task(bind=True)
+def sync_mesh_consent_task(self):
+    """
+    Push the client/site remote access privacy settings (#2292, #2404) to each
+    MeshCentral device. Only devices whose consent differs are changed, which
+    also covers new agents, moved agents and changes made inside MeshCentral.
+    """
+    with redis_lock(SYNC_MESH_CONSENT_TASK_LOCK, self.app.oid) as acquired:
+        if not acquired:
+            return f"{self.app.oid} still running"
+
+        wanted: dict[str, int] = {}
+        for agent in Agent.objects.select_related("site__client").only(
+            "mesh_node_id",
+            "monitoring_type",
+            "site__mesh_consent_workstation",
+            "site__mesh_consent_server",
+            "site__client__mesh_consent_workstation",
+            "site__client__mesh_consent_server",
+        ):
+            consent = agent.mesh_consent
+            if consent is not None and agent.mesh_node_id:
+                if (node_hex := agent.hex_mesh_node_id) != "error":
+                    wanted[f"node//{node_hex}"] = consent
+
+        if not wanted:
+            return
+
+        try:
+            ms = MeshSync(get_mesh_ws_url())
+            nodes = ms.mesh_action(payload={"action": "nodes"}, wait=True)["nodes"]
+            current = {
+                node["_id"]: node.get("consent", 0)
+                for group in nodes.values()
+                for node in group
+            }
+
+            changed = 0
+            for node_id, consent in wanted.items():
+                if node_id not in current or current[node_id] == consent:
+                    continue
+
+                logger.info(f"Setting mesh consent {consent} on {node_id}")
+                ms.mesh_action(
+                    payload={
+                        "action": "changedevice",
+                        "nodeid": node_id,
+                        "consent": consent,
+                    },
+                    wait=False,
+                )
+                changed += 1
+                if changed % 150 == 0:
+                    # same throttle as the perms sync, mesh is slow with sql
+                    sleep(7)
         except Exception:
             logger.debug(traceback.format_exc())
 

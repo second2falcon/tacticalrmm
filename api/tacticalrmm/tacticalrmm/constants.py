@@ -33,6 +33,7 @@ SYNC_SCHED_TASK_LOCK = "sync-sched-tasks-lock-key"
 AGENT_OUTAGES_LOCK = "agent-outages-task-lock-key"
 ORPHANED_WIN_TASK_LOCK = "orphaned-win-task-lock-key"
 SYNC_MESH_PERMS_TASK_LOCK = "sync-mesh-perms-lock-key"
+SYNC_MESH_CONSENT_TASK_LOCK = "sync-mesh-consent-lock-key"
 CACHE_DB_FIELDS_TASK_LOCK = "cache-db-fields-task-lock-key"
 
 # written by a worker every minute from a beat scheduled task, if it goes stale beat or the workers are not processing tasks

@@ -48,6 +48,8 @@ class SiteSerializer(ModelSerializer):
             "block_policy_inheritance",
             "maintenance_mode",
             "failing_checks",
+            "mesh_consent_workstation",
+            "mesh_consent_server",
         )
 
     def validate(self, val):
@@ -116,6 +118,8 @@ class ClientSerializer(ModelSerializer):
             "agent_count",
             "maintenance_mode",
             "failing_checks",
+            "mesh_consent_workstation",
+            "mesh_consent_server",
         )
 
     def validate(self, val):
