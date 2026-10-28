@@ -323,6 +323,9 @@ class CheckResult(models.Model):
     stderr = models.TextField(null=True, blank=True)
     retcode = models.BigIntegerField(null=True, blank=True)
     execution_time = models.CharField(max_length=100, null=True, blank=True)
+    # manual override (#2382): failures show as passing until this time
+    snoozed_until = models.DateTimeField(null=True, blank=True)
+    snoozed_by = models.CharField(max_length=255, null=True, blank=True)
     # cpu and mem check history
     history = ArrayField(
         models.IntegerField(blank=True), null=True, blank=True, default=list
@@ -510,6 +513,19 @@ class CheckResult(models.Model):
             )
 
         self.last_run = djangotime.now()
+
+        if self.snoozed_until:
+            # a real pass or an expired snooze ends it, otherwise hide the failure
+            if (
+                self.status == CheckStatus.PASSING
+                or self.snoozed_until <= self.last_run
+            ):
+                self.snoozed_until = None
+                self.snoozed_by = None
+                update_fields.extend(["snoozed_until", "snoozed_by"])
+            elif self.status == CheckStatus.FAILING:
+                self.status = CheckStatus.PASSING
+
         # handle status
         if self.status == CheckStatus.FAILING:
             self.fail_count += 1

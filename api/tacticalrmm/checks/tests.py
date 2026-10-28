@@ -711,6 +711,68 @@ class TestCheckTasks(TacticalTestCase):
         self.assertEqual(check_result.status, CheckStatus.FAILING)
         self.assertEqual(check_result.alert_severity, AlertSeverity.WARNING)
 
+    def test_snooze_check(self):
+        from logs.models import AuditLog
+
+        check = baker.make_recipe("checks.ping_check", agent=self.agent)
+        runner = "/api/v3/checkrunner/"
+        fail = {
+            "id": check.id,
+            "agent_id": self.agent.agent_id,
+            "status": CheckStatus.FAILING,
+            "output": "timed out",
+        }
+        self.client.patch(runner, fail, format="json")
+        result = CheckResult.objects.get(assigned_check=check, agent=self.agent)
+        self.assertEqual(result.status, CheckStatus.FAILING)
+
+        agent_user = self.client.handler._force_user
+        agent_token = self.client.handler._force_token
+        self.client.force_authenticate(user=self.john)
+        url = f"{base_url}/{result.pk}/snooze/"
+        for bad in ({}, {"minutes": "x"}, {"minutes": 0}, {"minutes": 90 * 1440 + 1}):
+            self.assertEqual(self.client.post(url, bad, format="json").status_code, 400)
+
+        r = self.client.post(url, {"minutes": 60}, format="json")
+        self.assertEqual(r.status_code, 200)
+        result.refresh_from_db()
+        self.assertEqual(result.status, CheckStatus.PASSING)
+        self.assertEqual(result.snoozed_by, "john")
+        self.assertTrue(AuditLog.objects.filter(message__contains="snoozed").exists())
+
+        # failures while snoozed are recorded but stay green
+        self.client.force_authenticate(user=agent_user, token=agent_token)
+        self.client.patch(runner, fail, format="json")
+        result.refresh_from_db()
+        self.assertEqual(result.status, CheckStatus.PASSING)
+        self.assertEqual(result.more_info, "timed out")
+        self.assertIsNotNone(result.snoozed_until)
+
+        # a real pass ends the snooze, so the next failure shows again
+        self.client.patch(
+            runner, {**fail, "status": CheckStatus.PASSING}, format="json"
+        )
+        result.refresh_from_db()
+        self.assertIsNone(result.snoozed_until)
+        self.client.patch(runner, fail, format="json")
+        result.refresh_from_db()
+        self.assertEqual(result.status, CheckStatus.FAILING)
+
+        # an expired snooze no longer hides failures
+        result.snoozed_until = djangotime.now() - djangotime.timedelta(minutes=1)
+        result.save()
+        self.client.patch(runner, fail, format="json")
+        result.refresh_from_db()
+        self.assertEqual(result.status, CheckStatus.FAILING)
+        self.assertIsNone(result.snoozed_until)
+
+        # manual removal
+        self.client.force_authenticate(user=self.john)
+        self.client.post(url, {"minutes": 60}, format="json")
+        self.assertEqual(self.client.delete(url).status_code, 200)
+        result.refresh_from_db()
+        self.assertIsNone(result.snoozed_until)
+
     def test_handle_ping_check(self):
         url = "/api/v3/checkrunner/"
 

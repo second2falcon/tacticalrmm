@@ -13,7 +13,14 @@ from rest_framework.views import APIView
 from agents.models import Agent
 from alerts.models import Alert
 from automation.models import Policy
-from tacticalrmm.constants import AGENT_DEFER, CheckStatus, CheckType
+from logs.models import AuditLog
+from tacticalrmm.constants import (
+    AGENT_DEFER,
+    AuditActionType,
+    AuditObjType,
+    CheckStatus,
+    CheckType,
+)
 from tacticalrmm.exceptions import NatsDown
 from tacticalrmm.helpers import notify_error
 from tacticalrmm.nats_utils import abulk_nats_command
@@ -128,6 +135,78 @@ class ResetCheck(APIView):
             alert.resolve()
 
         return Response("The check status was reset")
+
+
+class SnoozeCheck(APIView):
+    """Keep a failing check green for a while (#2382), ends early once it passes"""
+
+    permission_classes = [IsAuthenticated, ChecksPerms]
+    MAX_MINUTES = 90 * 24 * 60
+
+    def _get_result(self, request, pk):
+        result = get_object_or_404(
+            CheckResult.objects.select_related("agent", "assigned_check"), pk=pk
+        )
+        if not _has_perm_on_agent(request.user, result.agent.agent_id):
+            raise PermissionDenied()
+        return result
+
+    def _audit(self, request, result, message):
+        AuditLog.objects.create(
+            username=request.user.username,
+            agent=result.agent.hostname,
+            agent_id=result.agent.agent_id,
+            object_type=AuditObjType.CHECK,
+            action=AuditActionType.MODIFY,
+            message=message,
+            after_value={"snoozed_until": str(result.snoozed_until)},
+            debug_info={"ip": request._client_ip},
+        )
+
+    def post(self, request, pk):
+        result = self._get_result(request, pk)
+        try:
+            minutes = int(request.data["minutes"])
+        except (KeyError, TypeError, ValueError):
+            return notify_error("Invalid duration")
+        if not 1 <= minutes <= self.MAX_MINUTES:
+            return notify_error("Duration must be between 1 minute and 90 days")
+
+        result.snoozed_until = djangotime.now() + djangotime.timedelta(minutes=minutes)
+        result.snoozed_by = request.user.username
+        result.status = CheckStatus.PASSING
+        result.fail_count = 0
+        result.save(
+            update_fields=["snoozed_until", "snoozed_by", "status", "fail_count"]
+        )
+
+        if alert := Alert.create_or_return_check_alert(
+            result.assigned_check, agent=result.agent, skip_create=True
+        ):
+            alert.resolve()
+
+        desc = result.assigned_check.readable_desc
+        self._audit(
+            request,
+            result,
+            f"{request.user.username} snoozed {desc} on {result.agent.hostname}",
+        )
+        return Response(f"{desc} snoozed until {result.snoozed_until}")
+
+    def delete(self, request, pk):
+        result = self._get_result(request, pk)
+        result.snoozed_until = None
+        result.snoozed_by = None
+        result.save(update_fields=["snoozed_until", "snoozed_by"])
+
+        desc = result.assigned_check.readable_desc
+        self._audit(
+            request,
+            result,
+            f"{request.user.username} removed the snooze on {desc} "
+            f"on {result.agent.hostname}",
+        )
+        return Response(f"Snooze removed from {desc}")
 
 
 class ResetAllChecksStatus(APIView):
