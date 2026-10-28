@@ -5,10 +5,14 @@ if [ $EUID -ne 0 ]; then
     exit 1
 fi
 
-HAS_SYSTEMD=$(ps --no-headers -o comm 1)
-if [ "${HAS_SYSTEMD}" != 'systemd' ]; then
-    echo "This install script only supports systemd"
-    echo "Please install systemd or manually create the service using your systems's service manager"
+# systemd, or OpenRC on Alpine
+if [ -d /run/systemd/system ]; then
+    INIT_SYSTEM='systemd'
+elif [ -x /sbin/openrc-run ]; then
+    INIT_SYSTEM='openrc'
+else
+    echo "This install script only supports systemd and OpenRC"
+    echo "Please manually create the service using your systems's service manager"
     exit 1
 fi
 
@@ -41,6 +45,7 @@ agentBin="${agentBinPath}/${binName}"
 agentConf='/etc/tacticalagent'
 agentSvcName='tacticalagent.service'
 agentSysD="/etc/systemd/system/${agentSvcName}"
+agentInitD='/etc/init.d/tacticalagent'
 agentDir='/opt/tacticalagent'
 meshDir='/opt/tacticalmesh'
 meshSystemBin="${meshDir}/meshagent"
@@ -70,6 +75,12 @@ RemoveOldAgent() {
         systemctl daemon-reload
     fi
 
+    if [ -f "${agentInitD}" ]; then
+        rc-service tacticalagent stop >/dev/null 2>&1
+        rc-update del tacticalagent default >/dev/null 2>&1
+        rm -f "${agentInitD}"
+    fi
+
     if [ -f "${agentConf}" ]; then
         rm -f "${agentConf}"
     fi
@@ -84,7 +95,10 @@ RemoveOldAgent() {
 }
 
 InstallMesh() {
-    if [ -f /etc/os-release ]; then
+    # Alpine uses musl and has no locale tooling, the glibc locale setup does not apply
+    if [ -f /etc/alpine-release ]; then
+        :
+    elif [ -f /etc/os-release ]; then
         distroID=$(
             . /etc/os-release
             echo $ID
@@ -129,7 +143,9 @@ RemoveMesh() {
     fi
 
     rm -rf ${meshDir}
-    systemctl daemon-reload
+    if [ "${INIT_SYSTEM}" = 'systemd' ]; then
+        systemctl daemon-reload
+    fi
 }
 
 Uninstall() {
@@ -167,6 +183,17 @@ if [ $? -ne 0 ]; then
 fi
 chmod +x ${agentBin}
 
+# Alpine is musl based, the regular mesh agent needs glibc. MeshCentral ships a
+# musl x86-64 build (agent id 33), there is none for other architectures.
+if [ -f /etc/alpine-release ] && [[ $NOMESH -ne 1 ]]; then
+    if [ "$(uname -m)" = 'x86_64' ]; then
+        meshDL="${meshDL/meshinstall=6/meshinstall=33}"
+    else
+        echo "No mesh agent available for Alpine on $(uname -m), skipping mesh install"
+        NOMESH=1
+    fi
+fi
+
 if [[ $NOMESH -eq 1 ]]; then
     echo "Skipping mesh install"
 else
@@ -197,6 +224,29 @@ if [ "${proxy}" != '' ]; then
 fi
 
 eval "${INSTALL_CMD}"
+
+if [ "${INIT_SYSTEM}" = 'openrc' ]; then
+    cat >${agentInitD} <<EOF
+#!/sbin/openrc-run
+
+name="Tactical RMM Linux Agent"
+command="${agentBin}"
+command_args="-m svc"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=0
+rc_ulimit="-n 1000000"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+    chmod +x ${agentInitD}
+    rc-update add tacticalagent default
+    rc-service tacticalagent start
+    exit 0
+fi
 
 tacticalsvc="$(
     cat <<EOF
