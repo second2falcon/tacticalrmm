@@ -206,6 +206,39 @@ class TestClientViews(TacticalTestCase):
 
         self.check_not_authenticated("delete", url)
 
+    def test_delete_last_allowed_entry_of_role(self):
+        # deleting a role's only allowed site/client must not unrestrict it (#2457)
+        client = baker.make("clients.Client")
+        site, other_site = baker.make("clients.Site", client=client, _quantity=2)
+        role = baker.make("accounts.Role", name="site-only")
+        role.can_view_sites.set([site])
+
+        r = self.client.delete(f"/clients/sites/{site.id}/", format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("site-only", r.json())
+        self.assertTrue(Site.objects.filter(pk=site.pk).exists())
+
+        # deleting the client would cascade to the role's site
+        r = self.client.delete(f"/clients/{client.id}/", format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(Client.objects.filter(pk=client.pk).exists())
+
+        # allowed once the role keeps another entry
+        role.can_view_sites.add(other_site)
+        r = self.client.delete(f"/clients/sites/{site.id}/", format="json")
+        self.assertEqual(r.status_code, 200)
+
+        role.can_view_sites.clear()
+        role.can_view_clients.set([client])
+        r = self.client.delete(f"/clients/{client.id}/", format="json")
+        self.assertEqual(r.status_code, 400)
+
+        # superuser roles are unrestricted anyway
+        role.is_superuser = True
+        role.save()
+        r = self.client.delete(f"/clients/{client.id}/", format="json")
+        self.assertEqual(r.status_code, 200)
+
     def test_get_sites(self):
         # setup data
         baker.make("clients.Site", _quantity=5)
