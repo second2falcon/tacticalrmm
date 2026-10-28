@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 
 from agents.models import Agent, AgentHistory
 from logs.models import AuditLog, PendingAction
-from tacticalrmm.constants import AgentHistoryType, PAAction
+from tacticalrmm.constants import AgentHistoryType, AgentPlat, PAAction
 from tacticalrmm.helpers import notify_error
 
 from .models import ChocoSoftware, InstalledSoftware
@@ -75,7 +75,8 @@ class GetSoftware(APIView):
     # refresh software list
     def put(self, request, agent_id):
         agent = get_object_or_404(Agent, agent_id=agent_id)
-        if agent.is_posix:
+        # linux agents report dpkg packages (#2556)
+        if agent.plat == AgentPlat.DARWIN:
             return notify_error(f"Not available for {agent.plat}")
 
         r: Any = asyncio.run(agent.nats_cmd({"func": "softwarelist"}, timeout=15))

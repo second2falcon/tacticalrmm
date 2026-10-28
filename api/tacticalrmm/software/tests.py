@@ -135,6 +135,20 @@ class TestSoftwareViews(TacticalTestCase):
 
         self.check_not_authenticated("put", url)
 
+    @patch("agents.models.Agent.nats_cmd")
+    def test_refresh_installed_software_posix(self, nats_cmd):
+        pkgs = [{"name": "bash", "version": "5.2", "source": "dpkg"}]
+        nats_cmd.return_value = pkgs
+
+        linux = baker.make_recipe("agents.agent", plat="linux")
+        r = self.client.put(f"{base_url}/{linux.agent_id}/", format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(linux.installedsoftware_set.first().software, pkgs)
+
+        mac = baker.make_recipe("agents.agent", plat="darwin")
+        r = self.client.put(f"{base_url}/{mac.agent_id}/", format="json")
+        self.assertEqual(r.status_code, 400)
+
 
 class TestSoftwarePermissions(TacticalTestCase):
     def setUp(self):
