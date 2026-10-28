@@ -172,13 +172,14 @@ class WinUpdates(APIView):
 
     def post(self, request):
         updates = request.data["wua_updates"]
-        if not updates:
-            return notify_error("Empty payload")
-
         agent = get_object_or_404(
             Agent.objects.defer(*AGENT_DEFER),
             user=request.user,
         )
+        # linux agents send apt upgrades, an empty list means up to date (#2556)
+        is_linux = agent.plat == AgentPlat.LINUX
+        if not updates and not is_linux:
+            return notify_error("Empty payload")
 
         returned_guids = list()
 
@@ -192,7 +193,11 @@ class WinUpdates(APIView):
                 u.save(update_fields=["downloaded", "installed"])
             else:
                 try:
-                    kb = "KB" + update["kb_article_ids"][0]
+                    kb = (
+                        update["guid"].split("=")[0]
+                        if is_linux
+                        else "KB" + update["kb_article_ids"][0]
+                    )
                 except:
                     continue
 

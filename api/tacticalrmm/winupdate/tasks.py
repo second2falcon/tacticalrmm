@@ -11,7 +11,7 @@ from packaging import version as pyver
 from agents.models import Agent
 from logs.models import DebugLog
 from tacticalrmm.celery import app
-from tacticalrmm.constants import AGENT_STATUS_ONLINE, DebugLogType
+from tacticalrmm.constants import AGENT_STATUS_ONLINE, AgentPlat, DebugLogType
 
 
 @app.task
@@ -52,7 +52,8 @@ def check_agent_update_schedule_task() -> None:
         return
     # scheduled task that installs updates on agents if enabled
     for agent in Agent.online_agents(min_version="1.3.0"):
-        if agent.is_posix:
+        # linux agents install apt updates (#2556)
+        if agent.plat == AgentPlat.DARWIN:
             continue
 
         agent.delete_superseded_updates()

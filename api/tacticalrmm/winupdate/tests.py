@@ -192,3 +192,60 @@ class WinupdateTasks(TacticalTestCase):
     #     winupdates = WinUpdate.objects.all()
     #     for update in winupdates:
     #         self.assertEqual(update.action, "approve")
+
+
+class TestLinuxUpdates(TacticalTestCase):
+    """apt updates reported through the windows update api (#2556)"""
+
+    def setUp(self):
+        self.authenticate()
+        self.setup_coresettings()
+        self.agent = baker.make_recipe("agents.agent", plat="linux")
+        self.authenticate_agent(self.agent)
+
+    def _pkg(self, guid, severity=""):
+        return {
+            "guid": guid,
+            "title": guid,
+            "description": "Debian-Security:12/stable-security",
+            "severity": severity,
+            "categories": ["Updates"],
+            "category_ids": [],
+            "kb_article_ids": [],
+            "more_info_urls": [],
+            "support_url": "",
+            "revision_number": 0,
+            "installed": False,
+            "downloaded": False,
+        }
+
+    def test_scan_results(self):
+        url = "/api/v3/winupdates/"
+        data = {
+            "agent_id": self.agent.agent_id,
+            "wua_updates": [
+                self._pkg("openssl=3.0.15-1~deb12u1", "Important"),
+                self._pkg("tzdata=2024b-0+deb12u1"),
+            ],
+        }
+        r = self.client.post(url, data, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            set(self.agent.winupdates.values_list("kb", flat=True)),
+            {"openssl", "tzdata"},
+        )
+
+        # an empty scan means everything is up to date
+        r = self.client.post(url, {**data, "wua_updates": []}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(self.agent.winupdates.exists())
+
+    @patch("agents.models.Agent.nats_cmd")
+    def test_scan_allowed_for_linux_only(self, nats_cmd):
+        self.client.force_authenticate(user=self.john)
+        r = self.client.post(f"{base_url}/{self.agent.agent_id}/scan/")
+        self.assertEqual(r.status_code, 200)
+
+        mac = baker.make_recipe("agents.agent", plat="darwin")
+        r = self.client.post(f"{base_url}/{mac.agent_id}/scan/")
+        self.assertEqual(r.status_code, 400)
