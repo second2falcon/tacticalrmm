@@ -456,9 +456,26 @@ class TestAgentViews(TacticalTestCase):
                 "expire_day": 29,
                 "expire_hour": 18,
                 "expire_min": 46,
+                "reboot_delay": 5,
+                "reboot_message": "",
             },
         }
         nats_cmd.assert_called_with(nats_data, timeout=10)
+
+        # user warning with custom countdown
+        data["delay"] = 300
+        data["message"] = "Rebooting in 5 minutes, please save your work"
+        r = self.client.patch(url, data, format="json")
+        self.assertEqual(r.status_code, 200)
+        nats_data["schedtaskpayload"]["name"] = r.data["task_name"]
+        nats_data["schedtaskpayload"]["reboot_delay"] = 300
+        nats_data["schedtaskpayload"]["reboot_message"] = data["message"]
+        nats_cmd.assert_called_with(nats_data, timeout=10)
+
+        for bad in ({"delay": 1}, {"delay": "abc"}, {"message": "x" * 513}):
+            r = self.client.patch(url, {**data, **bad}, format="json")
+            self.assertEqual(r.status_code, 400)
+        del data["delay"], data["message"]
 
         nats_cmd.return_value = "error creating task"
         r = self.client.post(url, data, format="json")

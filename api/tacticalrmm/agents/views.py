@@ -730,6 +730,18 @@ class Reboot(APIView):
         if date_is_in_past(datetime_obj=obj, agent_tz=agent.timezone):
             return notify_error("Date cannot be set in the past")
 
+        # optional countdown and message shown to logged on users (#2450)
+        try:
+            reboot_delay = int(request.data.get("delay", 5))
+        except (TypeError, ValueError):
+            return notify_error("Invalid delay")
+        if not 5 <= reboot_delay <= 86400:
+            return notify_error("Delay must be between 5 seconds and 24 hours")
+
+        reboot_message = str(request.data.get("message") or "").strip()
+        if len(reboot_message) > 512:
+            return notify_error("Message cannot be longer than 512 characters")
+
         task_name = "TacticalRMM_SchedReboot_" + "".join(
             random.choice(string.ascii_letters) for _ in range(10)
         )
@@ -756,6 +768,8 @@ class Reboot(APIView):
                 "expire_day": int(expire_date.strftime("%-d")),
                 "expire_hour": int(expire_date.strftime("%-H")),
                 "expire_min": int(expire_date.strftime("%-M")),
+                "reboot_delay": reboot_delay,
+                "reboot_message": reboot_message,
             },
         }
 
