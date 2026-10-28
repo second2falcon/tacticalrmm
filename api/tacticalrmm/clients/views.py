@@ -4,7 +4,14 @@ import uuid
 from contextlib import suppress
 
 from django.conf import settings
-from django.db.models import Count, Exists, OuterRef, Prefetch, prefetch_related_objects
+from django.db.models import (
+    Count,
+    Exists,
+    OuterRef,
+    Prefetch,
+    Q,
+    prefetch_related_objects,
+)
 from django.shortcuts import get_object_or_404
 from django.utils import timezone as djangotime
 from knox.models import AuthToken
@@ -27,6 +34,34 @@ from .serializers import (
     SiteCustomFieldSerializer,
     SiteSerializer,
 )
+
+
+def _roles_left_unrestricted(*, client=None, site=None) -> list[str]:
+    """
+    Names of roles whose only allowed clients/sites are being deleted.
+    An empty allow list means unrestricted, so deleting them would grant
+    those roles access to every client (#2457).
+    """
+    from accounts.models import Role
+
+    gone_clients = [client.pk] if client else []
+    gone_sites = (
+        list(client.sites.values_list("pk", flat=True)) if client else [site.pk]
+    )
+
+    roles = (
+        Role.objects.filter(
+            Q(can_view_clients__in=gone_clients) | Q(can_view_sites__in=gone_sites)
+        )
+        .exclude(is_superuser=True)
+        .distinct()
+    )
+    return [
+        role.name
+        for role in roles
+        if not role.can_view_clients.exclude(pk__in=gone_clients).exists()
+        and not role.can_view_sites.exclude(pk__in=gone_sites).exists()
+    ]
 
 
 class GetAddClients(APIView):
@@ -170,6 +205,13 @@ class GetUpdateDeleteClient(APIView):
 
     def delete(self, request, pk):
         client = get_object_or_404(Client, pk=pk)
+        if roles := _roles_left_unrestricted(client=client):
+            return notify_error(
+                f"{client.name} is the last allowed client for role(s) "
+                f"{', '.join(roles)}. Deleting it would give them access to "
+                "all clients. Edit the role(s) first."
+            )
+
         agent_count = client.live_agent_count
 
         # only run tasks if it affects clients
@@ -270,6 +312,13 @@ class GetUpdateDeleteSite(APIView):
         site = get_object_or_404(Site, pk=pk)
         if site.client.sites.count() == 1:
             return notify_error("A client must have at least 1 site.")
+
+        if roles := _roles_left_unrestricted(site=site):
+            return notify_error(
+                f"{site.name} is the last allowed site for role(s) "
+                f"{', '.join(roles)}. Deleting it would give them access to "
+                "all clients. Edit the role(s) first."
+            )
 
         # only run tasks if it affects clients
         agent_count = site.live_agent_count
