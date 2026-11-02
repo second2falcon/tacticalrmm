@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 
 SCRIPT_VERSION="93"
-SCRIPT_URL="https://raw.githubusercontent.com/amidaware/tacticalrmm/master/install.sh"
+# Fork sources, override with environment variables, e.g. TRMM_BRANCH=my-branch ./install.sh
+TRMM_REPO="${TRMM_REPO:-second2falcon/tacticalrmm}"
+TRMM_BRANCH="${TRMM_BRANCH:-develop}"
+WEB_REPO="${WEB_REPO:-second2falcon/tacticalrmm-web}"
+WEB_BRANCH="${WEB_BRANCH:-develop}"
+AGENTS_REPO="${AGENTS_REPO:-second2falcon/trmm-agents}"
+SCRIPT_URL="https://raw.githubusercontent.com/${TRMM_REPO}/${TRMM_BRANCH}/install.sh"
 
 sudo apt update
 sudo apt install -y curl wget jq lsb-release ca-certificates openssl
@@ -417,11 +423,10 @@ sudo mkdir /rmm
 sudo chown ${USER}:${USER} /rmm
 sudo mkdir -p /var/log/celery
 sudo chown ${USER}:${USER} /var/log/celery
-git clone https://github.com/amidaware/tacticalrmm.git /rmm/
+git clone -b "${TRMM_BRANCH}" "https://github.com/${TRMM_REPO}.git" /rmm/
 cd /rmm
 git config user.email "admin@example.com"
 git config user.name "Bob"
-git checkout master
 
 sudo mkdir -p ${SCRIPTS_DIR}
 sudo chown ${USER}:${USER} ${SCRIPTS_DIR}
@@ -549,6 +554,11 @@ EOF
 )"
 echo "${localvars}" >$local_settings
 
+# agents built by github.com/${AGENTS_REPO}
+if ! grep -q '^AGENT_DOWNLOAD_URL' $local_settings; then
+  echo "AGENT_DOWNLOAD_URL = \"https://github.com/${AGENTS_REPO}/releases/download/v{version}/tacticalagent-v{version}-{plat}-{goarch}{ext}\"" | tee --append $local_settings >/dev/null
+fi
+
 if [[ "$insecure" = true ]]; then
   echo "TRMM_INSECURE = True" | tee --append $local_settings >/dev/null
 fi
@@ -615,7 +625,6 @@ python manage.py create_uwsgi_conf
 python manage.py load_chocos
 python manage.py load_community_scripts
 WEB_VERSION=$(python manage.py get_config webversion)
-WEBTAR_URL=$(python manage.py get_webtar_url)
 printf >&2 "${YELLOW}%0.s*${NC}" {1..80}
 printf >&2 "\n"
 printf >&2 "${YELLOW}Please create your login for the RMM website${NC}\n"
@@ -968,13 +977,22 @@ fi
 
 print_green 'Installing the frontend'
 
-webtar="trmm-web-v${WEB_VERSION}.tar.gz"
-wget -q ${WEBTAR_URL} -O /tmp/${webtar}
-sudo mkdir -p /var/www/rmm
-sudo tar -xzf /tmp/${webtar} -C /var/www/rmm
+build_frontend() {
+  local webtmp
+  webtmp=$(mktemp -d)
+  git clone --depth 1 -b "${WEB_BRANCH}" "https://github.com/${WEB_REPO}.git" "${webtmp}"
+  (cd "${webtmp}" && npm ci --no-audit --no-fund && npx quasar build) || {
+    echo "ERROR: building the frontend from ${WEB_REPO}@${WEB_BRANCH} failed"
+    exit 1
+  }
+  sudo rm -rf /var/www/rmm/dist
+  sudo mkdir -p /var/www/rmm/dist
+  sudo cp -r "${webtmp}/dist/." /var/www/rmm/dist/
+  rm -rf "${webtmp}"
+}
+build_frontend
 echo "window._env_ = {PROD_URL: \"https://${rmmdomain}\"}" | sudo tee /var/www/rmm/dist/env-config.js >/dev/null
 sudo chown www-data:www-data -R /var/www/rmm/dist
-rm -f /tmp/${webtar}
 
 nginxfrontend="$(
   cat <<EOF

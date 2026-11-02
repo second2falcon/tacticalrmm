@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 
 SCRIPT_VERSION="161"
-SCRIPT_URL='https://raw.githubusercontent.com/amidaware/tacticalrmm/master/update.sh'
-LATEST_SETTINGS_URL='https://raw.githubusercontent.com/amidaware/tacticalrmm/master/api/tacticalrmm/tacticalrmm/settings.py'
+# Fork sources, override with environment variables, e.g. TRMM_BRANCH=my-branch ./update.sh
+TRMM_REPO="${TRMM_REPO:-second2falcon/tacticalrmm}"
+TRMM_BRANCH="${TRMM_BRANCH:-develop}"
+WEB_REPO="${WEB_REPO:-second2falcon/tacticalrmm-web}"
+WEB_BRANCH="${WEB_BRANCH:-develop}"
+AGENTS_REPO="${AGENTS_REPO:-second2falcon/trmm-agents}"
+SCRIPT_URL="https://raw.githubusercontent.com/${TRMM_REPO}/${TRMM_BRANCH}/update.sh"
+LATEST_SETTINGS_URL="https://raw.githubusercontent.com/${TRMM_REPO}/${TRMM_BRANCH}/api/tacticalrmm/tacticalrmm/settings.py"
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -535,15 +541,15 @@ EOF
   sudo systemctl start meshcentral
 fi
 
-# update from main repo
+# update from the fork
 cd /rmm
 git config user.email "admin@example.com"
 git config user.name "Bob"
-git fetch
-git checkout master
+git remote set-url origin "https://github.com/${TRMM_REPO}.git"
+git fetch origin "${TRMM_BRANCH}"
+git checkout -B "${TRMM_BRANCH}" FETCH_HEAD
 git reset --hard FETCH_HEAD
 git clean -df
-git pull
 
 # update from community-scripts repo
 if [[ ! -d ${SCRIPTS_DIR} ]]; then
@@ -580,6 +586,11 @@ fi
 CHECK_CELERY_CONFIG=$(grep "soft-time-limit" /etc/conf.d/celery.conf)
 if ! [[ $CHECK_CELERY_CONFIG ]]; then
   sed -i 's/CELERYD_OPTS=.*/CELERYD_OPTS="--time-limit=14400 --soft-time-limit=14100 --autoscale=10,4"/g' /etc/conf.d/celery.conf
+fi
+
+# agents built by github.com/${AGENTS_REPO}
+if ! grep -q '^AGENT_DOWNLOAD_URL' $local_settings; then
+  echo "AGENT_DOWNLOAD_URL = \"https://github.com/${AGENTS_REPO}/releases/download/v{version}/tacticalagent-v{version}-{plat}-{goarch}{ext}\"" | tee --append $local_settings >/dev/null
 fi
 
 CHECK_ADMIN_ENABLED=$(grep ADMIN_ENABLED $local_settings)
@@ -649,7 +660,6 @@ API=$(python manage.py get_config api)
 WEB_VERSION=$(python manage.py get_config webversion)
 FRONTEND=$(python manage.py get_config webdomain)
 MESHDOMAIN=$(python manage.py get_config meshdomain)
-WEBTAR_URL=$(python manage.py get_webtar_url)
 CERT_PUB_KEY=$(python manage.py get_config certfile)
 CERT_PRIV_KEY=$(python manage.py get_config keyfile)
 deactivate
@@ -690,13 +700,22 @@ if [ ! -d /var/www/rmm ]; then
   sudo mkdir -p /var/www/rmm
 fi
 
-webtar="trmm-web-v${WEB_VERSION}.tar.gz"
-wget -q ${WEBTAR_URL} -O /tmp/${webtar}
-sudo rm -rf /var/www/rmm/dist
-sudo tar -xzf /tmp/${webtar} -C /var/www/rmm
+build_frontend() {
+  local webtmp
+  webtmp=$(mktemp -d)
+  git clone --depth 1 -b "${WEB_BRANCH}" "https://github.com/${WEB_REPO}.git" "${webtmp}"
+  (cd "${webtmp}" && npm ci --no-audit --no-fund && npx quasar build) || {
+    echo "ERROR: building the frontend from ${WEB_REPO}@${WEB_BRANCH} failed"
+    exit 1
+  }
+  sudo rm -rf /var/www/rmm/dist
+  sudo mkdir -p /var/www/rmm/dist
+  sudo cp -r "${webtmp}/dist/." /var/www/rmm/dist/
+  rm -rf "${webtmp}"
+}
+build_frontend
 echo "window._env_ = {PROD_URL: \"https://${API}\"}" | sudo tee /var/www/rmm/dist/env-config.js >/dev/null
 sudo chown www-data:www-data -R /var/www/rmm/dist
-rm -f /tmp/${webtar}
 
 for i in nats nats-api rmm daphne celery celerybeat nginx; do
   printf >&2 "${GREEN}Starting ${i} service${NC}\n"
