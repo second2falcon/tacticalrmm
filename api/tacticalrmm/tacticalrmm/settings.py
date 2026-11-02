@@ -90,6 +90,12 @@ WHEEL_VER = "0.47.0"
 
 AGENT_BASE_URL = "https://agents.tacticalrmm.com"
 
+# Self-built agents, e.g. releases of github.com/second2falcon/trmm-agents.
+# When set, every agent download uses this url instead of Amidaware's code
+# signing service or rmmagent releases. Placeholders: {version} {plat} {goarch}
+# {ext} (".exe" for windows, empty otherwise). Set it in local_settings.py.
+AGENT_DOWNLOAD_URL = ""
+
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
 ASGI_APPLICATION = "tacticalrmm.asgi.application"

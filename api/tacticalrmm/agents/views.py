@@ -822,7 +822,11 @@ def install_agent(request):
 
     codesign_token, is_valid = token_is_valid()
 
-    if request.data["installMethod"] in {"bash", "mac"} and not is_valid:
+    # self-built agents (AGENT_DOWNLOAD_URL) do not use the code signing service
+    self_built = bool(getattr(settings, "AGENT_DOWNLOAD_URL", ""))
+    if request.data["installMethod"] in {"bash", "mac"} and not (
+        is_valid or self_built
+    ):
         return notify_error(
             "Linux/Mac agents require code signing. Please see https://docs.tacticalrmm.com/code_signing/ for more info."
         )

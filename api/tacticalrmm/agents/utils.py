@@ -31,6 +31,14 @@ from tacticalrmm.helpers import notify_error
 
 def get_agent_url(*, goarch: str, plat: str, token: str = "") -> str:
     ver = settings.LATEST_AGENT_VER
+    if custom_url := getattr(settings, "AGENT_DOWNLOAD_URL", ""):
+        return custom_url.format(
+            version=ver,
+            plat=plat,
+            goarch=goarch,
+            ext=".exe" if plat == AgentPlat.WINDOWS else "",
+        )
+
     if token:
         params = {
             "version": ver,

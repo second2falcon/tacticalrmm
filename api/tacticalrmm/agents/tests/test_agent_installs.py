@@ -72,6 +72,11 @@ class TestAgentInstalls(TacticalTestCase):
         r = self.client.post(url, data, format="json")
         self.assertEqual(r.status_code, 400)
 
+        # self-built agents need no code signing
+        with self.settings(AGENT_DOWNLOAD_URL="https://example.com/{plat}"):
+            r = self.client.post(url, data, format="json")
+            self.assertEqual(r.status_code, 200)
+
         # test linux
         mock_token_valid.return_value = "token123", True
         r = self.client.post(url, data, format="json")

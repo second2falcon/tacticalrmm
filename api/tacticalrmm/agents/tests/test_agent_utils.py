@@ -71,6 +71,18 @@ class TestAgentUtils(TacticalTestCase):
         expected = f"https://github.com/amidaware/rmmagent/releases/download/v{ver}/tacticalagent-v{ver}-windows-amd64.exe"
         self.assertEqual(r, expected)
 
+        # self-built agents win over the token and get .exe only on windows
+        tpl = "https://dl.example.com/v{version}/tacticalagent-v{version}-{plat}-{goarch}{ext}"
+        with self.settings(AGENT_DOWNLOAD_URL=tpl):
+            self.assertEqual(
+                get_agent_url(goarch="arm64", plat="linux", token="token123"),
+                f"https://dl.example.com/v{ver}/tacticalagent-v{ver}-linux-arm64",
+            )
+            self.assertEqual(
+                get_agent_url(goarch="amd64", plat="windows"),
+                f"https://dl.example.com/v{ver}/tacticalagent-v{ver}-windows-amd64.exe",
+            )
+
         # test with token
         r = get_agent_url(goarch="386", plat="linux", token="token123")
         expected = f"https://{settings.AGENTS_URL}version={ver}&arch=386&token=token123&plat=linux&api=api.example.com"
