@@ -315,6 +315,20 @@ class TestLinuxPatchProgress(TacticalTestCase):
         other.refresh_from_db()
         self.assertNotEqual(other.results, "x")
 
+    def test_new_request_closes_unstarted_ones(self):
+        from agents.models import AgentHistory
+
+        first = self.agent.patch_install_nats_data(["a=1"])
+        started = self.agent.patch_install_nats_data(["b=1"])
+        AgentHistory.objects.filter(pk=started["id"]).update(results="== Installing")
+        self.agent.patch_install_nats_data(["c=1"])
+
+        self.assertIn("Not started", AgentHistory.objects.get(pk=first["id"]).results)
+        # entries the agent already wrote into are left alone
+        self.assertEqual(
+            AgentHistory.objects.get(pk=started["id"]).results, "== Installing"
+        )
+
     def test_windows_agents_get_no_history(self):
         from agents.models import AgentHistory
 

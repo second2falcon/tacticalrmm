@@ -71,6 +71,9 @@ Disk = Union[Dict[str, Any], str]
 logger = logging.getLogger("trmm")
 
 
+PATCH_INSTALL_WAITING = "Waiting for the agent to start..."
+
+
 class Agent(BaseAuditModel):
     class Meta:
         indexes = [
@@ -822,13 +825,24 @@ class Agent(BaseAuditModel):
         """
         data: dict[str, Any] = {"func": "installwinupdates", "guids": guids}
         if guids and self.plat == AgentPlat.LINUX:
+            # earlier requests the agent never picked up (offline, reconnecting,
+            # or an agent without progress support) would otherwise wait forever
+            AgentHistory.objects.filter(
+                agent=self,
+                type=AgentHistoryType.PATCH_INSTALL,
+                results=PATCH_INSTALL_WAITING,
+            ).update(
+                results="Not started: the agent never picked up this request "
+                "(offline, reconnecting or an older agent). A newer request replaced it."
+            )
+
             names = ", ".join(guid.split("=")[0] for guid in guids)
             hist = AgentHistory.objects.create(
                 agent=self,
                 type=AgentHistoryType.PATCH_INSTALL,
                 command=f"Install {len(guids)} update(s): {names}"[:1000],
                 username=username,
-                results="Waiting for the agent to start...",
+                results=PATCH_INSTALL_WAITING,
             )
             data["id"] = hist.pk
         return data
