@@ -150,6 +150,12 @@ class WinUpdates(APIView):
             raise WinUpdate.DoesNotExist
 
         success: bool = request.data["success"]
+        # linux keeps no installed history per package version, it would grow
+        # with every apt/apk run; the Patch Install history entry has the record
+        if success and agent.plat == AgentPlat.LINUX:
+            u.delete()
+            return Response("ok")
+
         if success:
             u.result = "success"
             u.downloaded = True
@@ -218,10 +224,12 @@ class WinUpdates(APIView):
                     revision_number=update["revision_number"],
                 ).save()
 
-        # remove stale updates not returned by agent
-        agent.winupdates.filter(installed=False).exclude(  # type: ignore
-            guid__in=returned_guids
-        ).delete()
+        # remove stale updates not returned by agent, on linux installed ones
+        # too since apt/apk only report what is still pending
+        stale = agent.winupdates.exclude(guid__in=returned_guids)  # type: ignore
+        if not is_linux:
+            stale = stale.filter(installed=False)
+        stale.delete()
 
         agent.delete_superseded_updates()
         return Response("ok")

@@ -235,7 +235,21 @@ class TestLinuxUpdates(TacticalTestCase):
             {"openssl", "tzdata"},
         )
 
-        # an empty scan means everything is up to date
+        # a successful install removes the row instead of keeping history
+        r = self.client.patch(
+            url, {"guid": "tzdata=2024b-0+deb12u1", "success": True}, format="json"
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(self.agent.winupdates.filter(kb="tzdata").exists())
+
+        # a failed one stays visible
+        self.client.patch(
+            url, {"guid": "openssl=3.0.15-1~deb12u1", "success": False}, format="json"
+        )
+        self.assertEqual(self.agent.winupdates.get(kb="openssl").result, "failed")
+
+        # an empty scan means everything is up to date, installed rows go too
+        self.agent.winupdates.update(installed=True)
         r = self.client.post(url, {**data, "wua_updates": []}, format="json")
         self.assertEqual(r.status_code, 200)
         self.assertFalse(self.agent.winupdates.exists())
