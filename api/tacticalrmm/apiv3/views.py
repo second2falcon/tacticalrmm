@@ -227,6 +227,30 @@ class WinUpdates(APIView):
         return Response("ok")
 
 
+class PatchInstallProgress(APIView):
+    """Linux agents stream apt/apk output into their Patch Install history entry"""
+
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    MAX_OUTPUT = 200_000
+
+    def patch(self, request):
+        agent = get_object_or_404(
+            Agent.objects.defer(*AGENT_DEFER),
+            user=request.user,
+        )
+        output = str(request.data.get("output", ""))
+        if len(output) > self.MAX_OUTPUT:
+            output = "...\n" + output[-self.MAX_OUTPUT :]
+
+        AgentHistory.objects.filter(
+            pk=request.data.get("id"),
+            agent=agent,
+            type=AgentHistoryType.PATCH_INSTALL,
+        ).update(results=output)
+        return Response("ok")
+
+
 class SupersededWinUpdate(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]

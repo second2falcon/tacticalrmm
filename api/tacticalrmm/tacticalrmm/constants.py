@@ -202,6 +202,7 @@ class AgentHistoryType(models.TextChoices):
     TASK_RUN = "task_run", "Task Run"
     SCRIPT_RUN = "script_run", "Script Run"
     CMD_RUN = "cmd_run", "CMD Run"
+    PATCH_INSTALL = "patch_install", "Patch Install"
 
 
 class AgentMonType(models.TextChoices):

@@ -52,12 +52,14 @@ class InstallWindowsUpdates(APIView):
         agent = get_object_or_404(Agent, agent_id=agent_id)
         agent.delete_superseded_updates()
         agent.approve_updates()
-        nats_data = {
-            "func": "installwinupdates",
-            "guids": agent.get_approved_update_guids(),
-        }
+        nats_data = agent.patch_install_nats_data(
+            agent.get_approved_update_guids(), username=request.user.username
+        )
         asyncio.run(agent.nats_cmd(nats_data, wait=False))
-        return Response(f"Approved patches will now be installed on {agent.hostname}")
+        msg = f"Approved patches will now be installed on {agent.hostname}"
+        if "id" in nats_data:
+            msg += ". Follow the progress in the agent's History tab"
+        return Response(msg)
 
 
 class EditWindowsUpdates(APIView):

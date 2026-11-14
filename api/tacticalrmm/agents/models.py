@@ -813,6 +813,26 @@ class Agent(BaseAuditModel):
 
         return patch_policy
 
+    def patch_install_nats_data(
+        self, guids: list[str], username: str = "system"
+    ) -> dict[str, Any]:
+        """
+        installwinupdates payload. Linux agents stream their apt/apk output
+        into a Patch Install history entry, its id is passed along.
+        """
+        data: dict[str, Any] = {"func": "installwinupdates", "guids": guids}
+        if guids and self.plat == AgentPlat.LINUX:
+            names = ", ".join(guid.split("=")[0] for guid in guids)
+            hist = AgentHistory.objects.create(
+                agent=self,
+                type=AgentHistoryType.PATCH_INSTALL,
+                command=f"Install {len(guids)} update(s): {names}"[:1000],
+                username=username,
+                results="Waiting for the agent to start...",
+            )
+            data["id"] = hist.pk
+        return data
+
     def get_approved_update_guids(self) -> list[str]:
         return list(
             self.winupdates.filter(action="approve", installed=False).values_list(  # type: ignore

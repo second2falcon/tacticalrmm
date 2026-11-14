@@ -52,6 +52,7 @@ urlpatterns = [
     path("choco/", views.Choco.as_view()),
     path("winupdates/", views.WinUpdates.as_view()),
     path("superseded/", views.SupersededWinUpdate.as_view()),
+    path("patchprogress/", views.PatchInstallProgress.as_view()),
     path("<int:pk>/<str:agentid>/histresult/", views.AgentHistoryResult.as_view()),
     path("<str:agentid>/config/", views.AgentConfig.as_view()),
     path("<str:agentid>/meshreinstall/", views.MeshReinstall.as_view()),

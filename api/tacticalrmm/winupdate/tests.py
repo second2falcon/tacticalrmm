@@ -249,3 +249,62 @@ class TestLinuxUpdates(TacticalTestCase):
         mac = baker.make_recipe("agents.agent", plat="darwin")
         r = self.client.post(f"{base_url}/{mac.agent_id}/scan/")
         self.assertEqual(r.status_code, 400)
+
+
+class TestLinuxPatchProgress(TacticalTestCase):
+    """apt/apk install output streamed into a Patch Install history entry"""
+
+    def setUp(self):
+        self.authenticate()
+        self.setup_coresettings()
+        self.agent = baker.make_recipe("agents.agent", plat="linux")
+        baker.make("winupdate.WinUpdatePolicy", agent=self.agent)
+        baker.make(
+            "winupdate.WinUpdate",
+            agent=self.agent,
+            guid="openssl=3.0.15-1~deb12u1",
+            action="approve",
+            installed=False,
+        )
+
+    @patch("agents.models.Agent.nats_cmd")
+    def test_install_creates_history_and_progress_updates_it(self, nats_cmd):
+        from agents.models import AgentHistory
+
+        r = self.client.post(f"{base_url}/{self.agent.agent_id}/install/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("History tab", r.data)
+
+        hist = AgentHistory.objects.get(agent=self.agent, type="patch_install")
+        self.assertIn("openssl", hist.command)
+        self.assertEqual(hist.username, "john")
+        nats_cmd.assert_called_with(
+            {
+                "func": "installwinupdates",
+                "guids": ["openssl=3.0.15-1~deb12u1"],
+                "id": hist.pk,
+            },
+            wait=False,
+        )
+
+        # the agent streams its output into the entry
+        self.authenticate_agent(self.agent)
+        url = "/api/v3/patchprogress/"
+        r = self.client.patch(url, {"id": hist.pk, "output": "Unpacking..."})
+        self.assertEqual(r.status_code, 200)
+        hist.refresh_from_db()
+        self.assertEqual(hist.results, "Unpacking...")
+
+        # other agents' entries and other history types are left alone
+        other = baker.make("agents.AgentHistory", type="cmd_run", agent=self.agent)
+        self.client.patch(url, {"id": other.pk, "output": "x"})
+        other.refresh_from_db()
+        self.assertNotEqual(other.results, "x")
+
+    def test_windows_agents_get_no_history(self):
+        from agents.models import AgentHistory
+
+        win = baker.make_recipe("agents.agent", plat="windows")
+        data = win.patch_install_nats_data(["guid-1"])
+        self.assertNotIn("id", data)
+        self.assertFalse(AgentHistory.objects.filter(agent=win).exists())

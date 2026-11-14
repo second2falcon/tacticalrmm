@@ -113,10 +113,7 @@ def check_agent_update_schedule_task() -> None:
                     log_type=DebugLogType.WIN_UPDATES,
                     message=f"Installing windows updates on {agent.hostname}",
                 )
-                nats_data = {
-                    "func": "installwinupdates",
-                    "guids": updates_to_install,
-                }
+                nats_data = agent.patch_install_nats_data(updates_to_install)
                 asyncio.run(agent.nats_cmd(nats_data, wait=False))
                 agent.patches_last_installed = djangotime.now()
                 agent.save(update_fields=["patches_last_installed"])
@@ -134,10 +131,7 @@ def bulk_install_updates_task(pks: list[int]) -> None:
             with suppress(Exception):
                 agent.approve_updates()
 
-            nats_data = {
-                "func": "installwinupdates",
-                "guids": agent.get_approved_update_guids(),
-            }
+            nats_data = agent.patch_install_nats_data(agent.get_approved_update_guids())
             asyncio.run(agent.nats_cmd(nats_data, wait=False))
         time.sleep(1)
 
